@@ -61,6 +61,8 @@ summary{cursor:pointer;font-weight:700;font-family:"Trebuchet MS",sans-serif;fon
 button.sec{background:none;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:8px 14px;font-size:14px;cursor:pointer;margin:12px 8px 0 0}
 #sync-status{font-size:14px;color:var(--mute)}
 [hidden]{display:none!important}
+select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font-size:15px;font-family:inherit}
+#t-err{white-space:pre-wrap}
 .owner-only{display:none}
 body.owner .owner-only{display:block}
 #owner-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px}
@@ -95,11 +97,11 @@ body.owner .owner-only{display:block}
     <h2>Add a team</h2>
     <div class="row">
       <div><label for="t-name">Team name</label><input id="t-name" placeholder="e.g. Rain offense"></div>
-      <div><label for="t-format">Format</label><input id="t-format" placeholder="e.g. Gen 9 OU"></div>
+      <div><label for="t-format">Format</label><select id="t-format"></select></div>
     </div>
     <label for="t-paste">Team</label>
     <textarea id="t-paste" class="mono" placeholder="Paste a Showdown export, or just list Pokémon separated by commas or new lines (Pelipper, Barraskewda, Ferrothorn...)"></textarea>
-    <p class="hint">Sprites appear as soon as the team is added.</p>
+    <p class="hint">Sprites appear as soon as the team is added. If you pick a format, the team is checked with Pokémon Showdown's validator first. Validation needs a full export with moves.</p>
     <label for="t-analysis">Analysis</label>
     <textarea id="t-analysis" placeholder="Game plan, strengths, weaknesses, threats, how each Pokémon is used..."></textarea>
     <button class="primary" onclick="addTeam()">Add team</button>
@@ -216,7 +218,7 @@ async function doLogin() {
     setStatus('Signing in...');
     await signIn($('o-email').value.trim(), $('o-pass').value);
     $('o-pass').value = ''; $('login').hidden = true;
-    isOwner = true; initMode(); renderAll(); syncNow();
+    isOwner = true; initMode(); renderAll(); syncNow(); psConnect().catch(() => {});
   } catch (e) { setStatus('Sign-in failed: ' + e.message, true); }
 }
 function toggleLogin() {
@@ -289,20 +291,118 @@ function parseTeam(text) {
     if (m) { nick = m[1].trim(); species = m[2].trim(); }
     if (gender === 'F' && ['Meowstic', 'Indeedee', 'Basculegion', 'Oinkologne'].includes(species)) species += '-F';
     const get = k => (lines.find(l => l.startsWith(k + ':')) || '').slice(k.length + 1).trim();
-    return {species, nick, item, ability: get('Ability'), tera: get('Tera Type'), nature: get('Nature') || (lines.find(l => /Nature$/.test(l)) || '').replace(' Nature', ''), evs: get('EVs'),
+    return {species, nick, item, ability: get('Ability'), tera: get('Tera Type'), nature: get('Nature') || (lines.find(l => /Nature$/.test(l)) || '').replace(' Nature', ''), evs: get('EVs'), ivs: get('IVs'), level: get('Level'), shiny: get('Shiny'), gender: gender || '',
       moves: lines.filter(l => l.startsWith('-')).map(l => l.replace(/^-\s*/, ''))};
   });
 }
 
-function addTeam() {
-  const txt = $('t-paste').value;
-  const mons = parseTeam(txt);
+/* ---------- formats and validation (through Pokémon Showdown's server) ---------- */
+const FALLBACK_FORMATS = [{title: 'Common formats', formats: ['[Gen 9] OU', '[Gen 9] Ubers', '[Gen 9] UU', '[Gen 9] RU', '[Gen 9] NU', '[Gen 9] PU', '[Gen 9] LC', '[Gen 9] Monotype', '[Gen 9] Doubles OU', '[Gen 9] National Dex', '[Gen 9] Random Battle']}];
+function fillFormats(groups) {
+  const sel = $('t-format'), cur = sel.value;
+  sel.innerHTML = '<option value="">No format (skip validation)</option>' + groups.map(g => `<optgroup label="${esc(g.title)}">${g.formats.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('')}</optgroup>`).join('');
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+function parseFormats(line) {
+  const toks = line.split('|').slice(2), groups = []; let g = null;
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (t.startsWith(',')) { g = {title: toks[++i] || 'Formats', formats: []}; groups.push(g); continue; }
+    if (!g || !t) continue;
+    const name = t.replace(/,[0-9a-f]+$/i, '').trim();
+    if (name) g.formats.push(name);
+  }
+  return groups.filter(x => x.formats.length);
+}
+
+let ps = null, psReady = null, psWait = null;
+function psConnect() {
+  if (psReady) return psReady;
+  psReady = new Promise((resolve, reject) => {
+    let opened = false;
+    const ws = new WebSocket('wss://sim3.psim.us/showdown/websocket');
+    const timer = setTimeout(() => { if (!opened) { reject(new Error('timeout')); ws.close(); } }, 8000);
+    ws.onopen = () => { opened = true; clearTimeout(timer); ps = ws; resolve(ws); };
+    ws.onmessage = ev => {
+      for (const line of String(ev.data).split('\n')) {
+        if (line.startsWith('|formats|')) { const g = parseFormats(line); if (g.length) fillFormats(g); }
+        else if (line.startsWith('|popup|') && psWait) { const w = psWait; psWait = null; clearTimeout(w.timer); w.resolve(line.slice(7)); }
+      }
+    };
+    const fail = () => {
+      clearTimeout(timer); psReady = null; ps = null;
+      if (!opened) reject(new Error('closed'));
+      if (psWait) { const w = psWait; psWait = null; clearTimeout(w.timer); w.reject(new Error('connection closed')); }
+    };
+    ws.onerror = fail; ws.onclose = fail;
+  });
+  psReady.catch(() => {});
+  return psReady;
+}
+function psAsk(lines) {
+  return new Promise((resolve, reject) => {
+    if (psWait) { reject(new Error('busy')); return; }
+    const timer = setTimeout(() => { psWait = null; reject(new Error('timeout')); }, 10000);
+    psWait = {resolve, reject, timer};
+    lines.forEach(l => ps.send(l));
+  });
+}
+
+const toId = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const packName = s => String(s || '').replace(/[^A-Za-z0-9]/g, '');
+const STAT_KEYS = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
+function statField(str, skip) {
+  if (!str) return '';
+  const v = {};
+  str.split('/').forEach(x => { const m = x.trim().match(/^(\d+)\s+(\w+)/); if (m) v[m[2].toLowerCase()] = +m[1]; });
+  const arr = STAT_KEYS.map(k => (v[k] === undefined || v[k] === skip) ? '' : v[k]);
+  return arr.every(x => x === '') ? '' : arr.join(',');
+}
+function packTeam(mons) {
+  return mons.map(m => {
+    const name = m.nick || m.species;
+    return [packName(name), m.nick ? packName(m.species) : '', packName(m.item), packName(m.ability), m.moves.map(toId).join(','), (m.nature || '').trim(),
+      statField(m.evs, 0), m.gender || '', statField(m.ivs, 31), /^yes$/i.test(m.shiny || '') ? 'S' : '', (m.level && m.level !== '100') ? m.level : '',
+      m.tera ? ',,,,,' + m.tera : ''].join('|');
+  }).join(']');
+}
+
+async function validateTeam(mons, fmt) {
+  if (/random|blitz/i.test(fmt)) return {ok: true};
+  if (mons.every(m => !m.moves.length)) return {ok: false, msg: 'Validation needs a full Showdown export with moves, abilities and items. Paste the full export, or choose "No format" to skip validation.'};
+  try {
+    await psConnect();
+    const t = await psAsk([`|/utm ${packTeam(mons)}`, `|/vtm ${toId(fmt)}`]);
+    const text = t.replace(/<[^>]+>/g, '').replace(/\|\|/g, '\n').trim();
+    if (/is valid/i.test(text) && !/rejected/i.test(text)) return {ok: true};
+    return {ok: false, msg: text.replace(/^Your team was rejected for the following reasons:\s*/i, 'Not valid for ' + fmt + ':\n')};
+  } catch (e) {
+    return {ok: false, unreachable: true, msg: 'Could not reach Pokémon Showdown to validate (' + e.message + ').'};
+  }
+}
+
+let addingTeam = false;
+async function addTeam() {
+  if (addingTeam) return;
+  const mons = parseTeam($('t-paste').value);
   if (!mons.length) { $('t-err').textContent = 'Paste a team or list at least one Pokémon.'; return; }
-  $('t-err').textContent = '';
-  data.teams.unshift({id: Date.now(), name: $('t-name').value.trim() || 'Untitled team', format: $('t-format').value.trim(), mons, analysis: $('t-analysis').value, added: new Date().toISOString()});
-  save();
-  ['t-name', 't-format', 't-paste', 't-analysis'].forEach(i => $(i).value = '');
-  renderTeams();
+  const fmt = $('t-format').value;
+  addingTeam = true;
+  try {
+    if (fmt) {
+      $('t-err').textContent = 'Validating for ' + fmt + '...';
+      const v = await validateTeam(mons, fmt);
+      if (!v.ok) {
+        if (v.unreachable && confirm(v.msg + '\n\nAdd the team without validating?')) { /* continue */ }
+        else { $('t-err').textContent = v.msg; return; }
+      }
+    }
+    $('t-err').textContent = '';
+    data.teams.unshift({id: Date.now(), name: $('t-name').value.trim() || 'Untitled team', format: fmt, mons, analysis: $('t-analysis').value, added: new Date().toISOString()});
+    save();
+    ['t-name', 't-format', 't-paste', 't-analysis'].forEach(i => $(i).value = '');
+    renderTeams();
+  } finally { addingTeam = false; }
 }
 
 function renderTeams() {
@@ -459,7 +559,7 @@ function del(kind, id) {
   renderAll();
 }
 function renderAll() { renderTeams(); renderReplays(); }
-initMode(); renderAll();
+initMode(); renderAll(); fillFormats(FALLBACK_FORMATS); if (isOwner) psConnect().catch(() => {});
 if (dbOn()) { syncNow(); if (!isOwner) setInterval(syncNow, 60000); } else refreshOld();
 document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
 </script>
