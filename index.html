@@ -169,6 +169,7 @@ async function syncNow() {
     if (!p.ok) throw new Error('write failed (status ' + p.status + ')');
     setStatus('Synced at ' + new Date().toLocaleTimeString());
     if (changed && document.activeElement?.tagName !== 'TEXTAREA') renderAll();
+    refreshOld();
   } catch (e) {
     setStatus('Sync failed: ' + e.message + '. Check the database URL and rules.', true);
   } finally {
@@ -279,7 +280,7 @@ function renderTeams() {
 /* ---------- replays ---------- */
 function parseReplay(log, meta) {
   const players = {p1: meta.players?.[0] || 'Player 1', p2: meta.players?.[1] || 'Player 2'};
-  const teams = {p1: [], p2: []}, fainted = {p1: [], p2: []};
+  const teams = {p1: [], p2: []}, fainted = {p1: [], p2: []}, revealed = {p1: [], p2: []};
   let winner = '', turn = 0, format = meta.format || '';
   const turns = [{n: 0, ev: []}];
   const who = s => { const m = s.match(/^(p[12])[ab]?: (.+)$/); return m ? {side: m[1], name: m[2]} : {side: '', name: s}; };
@@ -307,7 +308,7 @@ function parseReplay(log, meta) {
     else if (k === 'tier') format = p[2];
     else if (k === 'poke') { const sp = p[3].split(',')[0].replace(/-\*$/, ''); teams[p[2]].push(sp); }
     else if (k === 'turn') { turn = +p[2]; turns.push({n: turn, ev: []}); last = null; }
-    else if (k === 'switch' || k === 'drag') { const w = who(p[2]); hp[w.side + ':' + w.name] = pct(p[4]); cur().push(`${pn(w.side)} sent out ${p[3].split(',')[0]}`); }
+    else if (k === 'switch' || k === 'drag') { const w = who(p[2]); hp[w.side + ':' + w.name] = pct(p[4]); const sp = p[3].split(',')[0]; if (revealed[w.side] && !revealed[w.side].includes(sp)) revealed[w.side].push(sp); cur().push(`${pn(w.side)} sent out ${p[3].split(',')[0]}`); }
     else if (k === 'move') { const w = who(p[2]); const base = `${w.name} (${pn(w.side)}) used ${p[3]}`; cur().push(base); last = {idx: cur().length - 1, base, parts: []}; }
     else if (k === 'faint') { const w = who(p[2]); cur().push(`${w.name} (${pn(w.side)}) fainted`); fainted[w.side].push(w.name); }
     else if (k === '-terastallize') { const w = who(p[2]); cur().push(`${w.name} Terastallized into ${p[3]}`); }
@@ -320,7 +321,7 @@ function parseReplay(log, meta) {
     else if (k === '-immune') note(`${who(p[2]).name} is immune`);
     else if (k === 'win') winner = p[2];
   }
-  return {players, teams, fainted, winner, turnCount: turn, format, turns: turns.filter(t => t.ev.length)};
+  return {players, teams: {p1: teams.p1.length ? teams.p1 : revealed.p1, p2: teams.p2.length ? teams.p2 : revealed.p2}, fainted, winner, turnCount: turn, format, turns: turns.filter(t => t.ev.length)};
 }
 
 async function addReplay() {
@@ -333,12 +334,32 @@ async function addReplay() {
     if (!res.ok) throw new Error('Replay not found (status ' + res.status + ')');
     const j = await res.json();
     const parsed = parseReplay(j.log || '', {players: j.players, format: j.format});
-    data.replays.unshift({id: Date.now(), rid: id, url: `https://replay.pokemonshowdown.com/${id}`, ...parsed, analysis: $('r-analysis').value, added: new Date().toISOString()});
+    data.replays.unshift({id: Date.now(), rid: id, url: `https://replay.pokemonshowdown.com/${id}`, ...parsed, pv: 3, analysis: $('r-analysis').value, added: new Date().toISOString()});
     save(); $('r-url').value = ''; $('r-analysis').value = ''; $('r-err').textContent = '';
     renderReplays();
   } catch (e) {
     $('r-err').textContent = 'Could not load that replay: ' + e.message + '. Check the link and your connection.';
   }
+}
+
+let upgrading = false;
+async function refreshOld() {
+  if (upgrading) return;
+  upgrading = true;
+  let changed = false;
+  try {
+    for (const r of data.replays) {
+      if (r.pv === 3) continue;
+      try {
+        const res = await fetch(`https://replay.pokemonshowdown.com/${r.rid}.json`);
+        if (!res.ok) continue;
+        const j = await res.json();
+        Object.assign(r, parseReplay(j.log || '', {players: j.players, format: j.format}), {pv: 3, updated: Date.now()});
+        changed = true;
+      } catch (e) {}
+    }
+  } finally { upgrading = false; }
+  if (changed) { save(); if (document.activeElement?.tagName !== 'TEXTAREA') renderAll(); }
 }
 
 function replayDoc(log) {
@@ -394,7 +415,7 @@ function del(kind, id) {
   renderAll();
 }
 function renderAll() { renderTeams(); renderReplays(); }
-renderAll();
+renderAll(); refreshOld();
 if (syncOn()) { $('s-url').value = sync.url; $('s-code').value = sync.code; $('sync').open = false; syncNow(); }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
 </script>
