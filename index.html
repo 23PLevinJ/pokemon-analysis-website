@@ -59,7 +59,14 @@ summary{cursor:pointer;font-weight:700;font-family:"Trebuchet MS",sans-serif;fon
 #sync summary{font-size:15px}
 #sync .row button{margin-top:0}
 button.sec{background:none;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:8px 14px;font-size:14px;cursor:pointer;margin:12px 8px 0 0}
-#sync-status{font-size:14px;color:var(--mute);margin-top:10px}
+#sync-status{font-size:14px;color:var(--mute)}
+[hidden]{display:none!important}
+.owner-only{display:none}
+body.owner .owner-only{display:block}
+#owner-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px}
+#owner-bar button{margin:0}
+.read{white-space:pre-wrap}
+.analysis h4{margin:12px 0 4px;font-size:14px}
 .video{width:100%;height:780px;border:1px solid var(--line);border-radius:6px;background:#fff;margin-top:12px}
 @media(max-width:700px){.video{height:920px}}
 </style>
@@ -74,20 +81,17 @@ button.sec{background:none;border:1px solid var(--line);color:var(--ink);border-
   </nav>
 </header>
 <main>
-<details class="panel" id="sync">
-  <summary>Sync across devices</summary>
-  <p class="hint">Uses a free Firebase Realtime Database that you own. Enter the same database URL and sync code on every device. Anyone who knows your sync code can read and edit your data, so keep it private.</p>
-  <div class="row">
-    <div><label for="s-url">Database URL</label><input id="s-url" placeholder="https://your-project-default-rtdb.firebaseio.com"></div>
-    <div><label for="s-code">Sync code (8+ characters)</label><input id="s-code" autocomplete="off"></div>
-  </div>
-  <button class="sec" onclick="genCode()">Generate code</button>
-  <button class="primary" style="margin-top:12px" onclick="connectSync()">Connect and sync</button>
-  <button class="sec" onclick="disconnectSync()">Disconnect</button>
-  <div id="sync-status">Not connected. Data is saved only in this browser.</div>
-</details>
+<div id="owner-bar">
+  <span id="sync-status" class="meta"></span>
+  <button class="sec" id="login-toggle" onclick="toggleLogin()">Owner login</button>
+</div>
+<div class="panel" id="login" hidden>
+  <label for="o-email">Owner email</label><input id="o-email" type="email" autocomplete="username">
+  <label for="o-pass">Password</label><input id="o-pass" type="password" autocomplete="current-password">
+  <button class="primary" onclick="doLogin()">Sign in</button>
+</div>
 <section id="teams">
-  <div class="panel">
+  <div class="panel owner-only">
     <h2>Add a team</h2>
     <div class="row">
       <div><label for="t-name">Team name</label><input id="t-name" placeholder="e.g. Rain offense"></div>
@@ -105,7 +109,7 @@ button.sec{background:none;border:1px solid var(--line);color:var(--ink);border-
 </section>
 
 <section id="replays" hidden>
-  <div class="panel">
+  <div class="panel owner-only">
     <h2>Add a replay</h2>
     <label for="r-url">Replay link</label>
     <input id="r-url" placeholder="https://replay.pokemonshowdown.com/gen9ou-1234567890">
@@ -126,18 +130,23 @@ try { const s = localStorage.getItem('teamNotebook'); if (s) data = JSON.parse(s
 data.teams = data.teams || []; data.replays = data.replays || []; data.deleted = data.deleted || {};
 const saveLocal = () => { try { localStorage.setItem('teamNotebook', JSON.stringify(data)); } catch (e) {} };
 
-/* ---------- sync (Firebase Realtime Database over REST) ---------- */
-let sync = {url: '', code: ''};
-try { sync = JSON.parse(localStorage.getItem('teamNotebookSync')) || sync; } catch (e) {}
+/* ---------- sharing: anyone can view, only the owner can edit ---------- */
+// Fill these in once (setup steps are in the chat), then host this file.
+// Leave them empty to use the page on your own device only.
+const CONFIG = {dbUrl: '', apiKey: ''};
+let auth = null;
+try { auth = JSON.parse(localStorage.getItem('teamNotebookAuth')); } catch (e) {}
+const dbOn = () => !!(CONFIG.dbUrl && CONFIG.apiKey);
+let isOwner = !dbOn() || !!(auth && auth.refreshToken);
+const dbPath = () => CONFIG.dbUrl.replace(/\/+$/, '') + '/notebook.json';
 let pushTimer, syncing = false, syncAgain = false;
-const syncOn = () => !!(sync.url && sync.code);
-const endpoint = () => `${sync.url.replace(/\/+$/, '')}/notebooks/${encodeURIComponent(sync.code)}.json`;
 const setStatus = (m, bad) => { const e = $('sync-status'); e.textContent = m; e.style.color = bad ? 'var(--bad)' : ''; };
 const stamp = i => i.updated || i.id;
+const storeAuth = () => { try { localStorage.setItem('teamNotebookAuth', JSON.stringify(auth)); } catch (e) {} };
 
 function save() {
   saveLocal();
-  if (syncOn()) { clearTimeout(pushTimer); pushTimer = setTimeout(syncNow, 1000); }
+  if (dbOn() && isOwner) { clearTimeout(pushTimer); pushTimer = setTimeout(syncNow, 1000); }
 }
 
 function merge(remote) {
@@ -152,45 +161,82 @@ function merge(remote) {
     data[kind] = [...map.values()].filter(i => !gone[i.id]).sort((a, b) => b.id - a.id);
   }
 }
+function replaceData(remote) { data.teams = remote.teams || []; data.replays = remote.replays || []; data.deleted = remote.deleted || {}; }
+
+async function signIn(email, password) {
+  const r = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(CONFIG.apiKey)}`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email, password, returnSecureToken: true})});
+  const j = await r.json();
+  if (!r.ok) throw new Error((j.error && j.error.message) || 'status ' + r.status);
+  auth = {email: j.email, refreshToken: j.refreshToken, idToken: j.idToken, exp: Date.now() + (+j.expiresIn - 60) * 1000};
+  storeAuth();
+}
+async function token() {
+  if (!auth) throw new Error('not signed in');
+  if (auth.exp > Date.now()) return auth.idToken;
+  const r = await fetch(`https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(CONFIG.apiKey)}`, {
+    method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(auth.refreshToken)});
+  const j = await r.json();
+  if (!r.ok) throw new Error('session expired, sign in again');
+  auth.idToken = j.id_token; auth.refreshToken = j.refresh_token; auth.exp = Date.now() + (+j.expires_in - 60) * 1000;
+  storeAuth();
+  return auth.idToken;
+}
 
 async function syncNow() {
-  if (!syncOn()) return;
+  if (!dbOn()) return;
   if (syncing) { syncAgain = true; return; }
   syncing = true; setStatus('Syncing...');
   try {
-    const r = await fetch(endpoint());
+    const r = await fetch(dbPath());
     if (!r.ok) throw new Error('read failed (status ' + r.status + ')');
     const raw = await r.json();
     const before = JSON.stringify(data);
-    if (raw) merge(JSON.parse(raw));
+    if (raw) { const remote = JSON.parse(raw); isOwner ? merge(remote) : replaceData(remote); }
     const changed = before !== JSON.stringify(data);
-    saveLocal();
-    const p = await fetch(endpoint(), {method: 'PUT', body: JSON.stringify(JSON.stringify(data))});
-    if (!p.ok) throw new Error('write failed (status ' + p.status + ')');
-    setStatus('Synced at ' + new Date().toLocaleTimeString());
+    if (isOwner) {
+      saveLocal();
+      const t = await token();
+      const p = await fetch(dbPath() + '?auth=' + encodeURIComponent(t), {method: 'PUT', body: JSON.stringify(JSON.stringify(data))});
+      if (!p.ok) throw new Error('write refused (status ' + p.status + '). Check the database rules and the owner email');
+    }
+    setStatus((isOwner ? 'Signed in as owner. ' : '') + 'Updated ' + new Date().toLocaleTimeString());
     if (changed && document.activeElement?.tagName !== 'TEXTAREA') renderAll();
-    refreshOld();
+    if (isOwner) refreshOld();
   } catch (e) {
-    setStatus('Sync failed: ' + e.message + '. Check the database URL and rules.', true);
+    setStatus('Sync failed: ' + e.message, true);
   } finally {
     syncing = false;
     if (syncAgain) { syncAgain = false; syncNow(); }
   }
 }
 
-function genCode() { $('s-code').value = crypto.randomUUID().replace(/-/g, '').slice(0, 20); }
-function connectSync() {
-  const url = $('s-url').value.trim(), code = $('s-code').value.trim();
-  if (!/^https:\/\//.test(url) || code.length < 8) { setStatus('Enter the https database URL and a sync code of at least 8 characters.', true); return; }
-  sync = {url, code};
-  try { localStorage.setItem('teamNotebookSync', JSON.stringify(sync)); } catch (e) {}
-  syncNow();
+async function doLogin() {
+  try {
+    setStatus('Signing in...');
+    await signIn($('o-email').value.trim(), $('o-pass').value);
+    $('o-pass').value = ''; $('login').hidden = true;
+    isOwner = true; initMode(); renderAll(); syncNow();
+  } catch (e) { setStatus('Sign-in failed: ' + e.message, true); }
 }
-function disconnectSync() {
-  sync = {url: '', code: ''};
-  try { localStorage.removeItem('teamNotebookSync'); } catch (e) {}
-  setStatus('Not connected. Data is saved only in this browser.');
+function toggleLogin() {
+  if (isOwner) {
+    auth = null; try { localStorage.removeItem('teamNotebookAuth'); } catch (e) {}
+    isOwner = false; data = {teams: [], replays: [], deleted: {}};
+    initMode(); renderAll(); syncNow();
+  } else $('login').hidden = !$('login').hidden;
 }
+function initMode() {
+  document.body.classList.toggle('owner', isOwner);
+  $('owner-bar').hidden = !dbOn();
+  $('login-toggle').textContent = isOwner ? 'Sign out' : 'Owner login';
+}
+
+function analysisBlock(kind, id, pre, text) {
+  if (isOwner) return `<div class="analysis"><label for="${pre}-${id}">Analysis</label><textarea id="${pre}-${id}" oninput="editAnalysis('${kind}',${id},this.value)">${esc(text)}</textarea></div>`;
+  return text ? `<div class="analysis"><h4 class="sans">Analysis</h4><div class="read">${esc(text)}</div></div>` : '';
+}
+const delBtn = (kind, id, label) => isOwner ? `<button class="link" onclick="del('${kind}',${id})">${label}</button>` : '';
 
 function showTab(t) {
   ['teams', 'replays'].forEach(n => {
@@ -261,7 +307,7 @@ function addTeam() {
 
 function renderTeams() {
   const el = $('team-list');
-  if (!data.teams.length) { el.innerHTML = '<div class="empty">No teams yet. Add one above.</div>'; return; }
+  if (!data.teams.length) { el.innerHTML = '<div class="empty">No teams yet.</div>'; return; }
   el.innerHTML = data.teams.map(t => `
     <div class="panel">
       <div class="entry-head"><h3>${esc(t.name)}</h3><span class="meta">${esc(t.format)} ${esc(new Date(t.added).toLocaleDateString())}</span></div>
@@ -271,9 +317,8 @@ function renderTeams() {
         <div class="meta">${[m.ability, m.tera && 'Tera ' + m.tera, m.nature].filter(Boolean).map(esc).join(', ')}</div>
         ${m.evs ? `<div class="meta">EVs: ${esc(m.evs)}</div>` : ''}
         <ul>${m.moves.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div></div>`).join('')}</div></details>` : ''}
-      <div class="analysis"><label for="ta-${t.id}">Analysis</label>
-      <textarea id="ta-${t.id}" oninput="editAnalysis('teams',${t.id},this.value)">${esc(t.analysis)}</textarea></div>
-      <button class="link" onclick="del('teams',${t.id})">Delete team</button>
+      ${analysisBlock('teams', t.id, 'ta', t.analysis)}
+      ${delBtn('teams', t.id, 'Delete team')}
     </div>`).join('');
 }
 
@@ -344,7 +389,7 @@ async function addReplay() {
 
 let upgrading = false;
 async function refreshOld() {
-  if (upgrading) return;
+  if (upgrading || !isOwner) return;
   upgrading = true;
   let changed = false;
   try {
@@ -388,7 +433,7 @@ async function watch(id, rid, btn) {
 
 function renderReplays() {
   const el = $('replay-list');
-  if (!data.replays.length) { el.innerHTML = '<div class="empty">No replays yet. Add a link above.</div>'; return; }
+  if (!data.replays.length) { el.innerHTML = '<div class="empty">No replays yet.</div>'; return; }
   el.innerHTML = data.replays.map(r => {
     const side = s => `<div><h4>${esc(r.players[s])}${r.winner === r.players[s] ? ' <span class="win">(winner)</span>' : ''}</h4>
       <div class="sprites">${r.teams[s].map(sp => monCard(sp, r.fainted[s].some(f => f === sp || sp.startsWith(f)))).join('')}</div></div>`;
@@ -399,9 +444,8 @@ function renderReplays() {
       <button class="sec" onclick="watch(${r.id},'${esc(r.rid)}',this)">Watch replay</button>
       <div id="vid-${r.id}"></div>
       <details><summary>Turn-by-turn log</summary>${r.turns.map(t => `<div class="turn"><b>${t.n ? 'Turn ' + t.n : 'Leads'}</b>${t.ev.map(e => `<p>${esc(e)}</p>`).join('')}</div>`).join('')}</details>
-      <div class="analysis"><label for="ra-${r.id}">Analysis</label>
-      <textarea id="ra-${r.id}" oninput="editAnalysis('replays',${r.id},this.value)">${esc(r.analysis)}</textarea></div>
-      <button class="link" onclick="del('replays',${r.id})">Delete replay</button>
+      ${analysisBlock('replays', r.id, 'ra', r.analysis)}
+      ${delBtn('replays', r.id, 'Delete replay')}
     </div>`;
   }).join('');
 }
@@ -415,8 +459,8 @@ function del(kind, id) {
   renderAll();
 }
 function renderAll() { renderTeams(); renderReplays(); }
-renderAll(); refreshOld();
-if (syncOn()) { $('s-url').value = sync.url; $('s-code').value = sync.code; $('sync').open = false; syncNow(); }
+initMode(); renderAll();
+if (dbOn()) { syncNow(); if (!isOwner) setInterval(syncNow, 60000); } else refreshOld();
 document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
 </script>
 </body>
