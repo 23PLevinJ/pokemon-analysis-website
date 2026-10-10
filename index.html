@@ -199,19 +199,27 @@ function showTab(t) {
 /* ---------- sprites ---------- */
 const HYPHEN_BASES = ['ting-lu', 'chien-pao', 'wo-chien', 'chi-yu', 'porygon-z', 'ho-oh', 'jangmo-o', 'hakamo-o', 'kommo-o', 'nidoran-f', 'nidoran-m'];
 const sid = n => {
-  let s = n.toLowerCase().replace(/[^a-z0-9-]/g, '');
+  let s = n.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9-]/g, '');
   for (const b of HYPHEN_BASES) if (s === b || s.startsWith(b + '-')) s = b.replace(/-/g, '') + s.slice(b.length);
+  const i = s.indexOf('-');
+  if (i > -1) s = s.slice(0, i + 1) + s.slice(i + 1).replace(/-/g, '');
   return s;
 };
 const SPRITE = 'https://play.pokemonshowdown.com/sprites/';
+const SPRITE_DIRS = ['gen5/{}.png', 'ani/{}.gif', 'dex/{}.png', 'gen5ani/{}.gif'];
+function spriteCandidates(id) {
+  const base = id.split('-')[0];
+  const ids = id === base ? [id] : [id, base];
+  return ids.flatMap(i => SPRITE_DIRS.map(d => SPRITE + d.replace('{}', i)));
+}
 function spriteFallback(img) {
   const id = img.dataset.id, stage = +img.dataset.stage || 0;
   img.dataset.stage = stage + 1;
-  if (stage === 0) img.src = SPRITE + 'dex/' + id + '.png';
-  else if (stage === 1 && id.includes('-')) img.src = SPRITE + 'gen5/' + id.split('-')[0] + '.png';
+  const list = spriteCandidates(id);
+  if (stage + 1 < list.length) img.src = list[stage + 1];
   else img.style.visibility = 'hidden';
 }
-const sprite = (name, cls = '') => `<img ${cls} alt="${esc(name)}" data-id="${esc(sid(name))}" src="${SPRITE}gen5/${esc(sid(name))}.png" onerror="spriteFallback(this)">`;
+const sprite = (name, cls = '') => `<img ${cls} alt="${esc(name)}" data-id="${esc(sid(name))}" src="${esc(spriteCandidates(sid(name))[0])}" onerror="spriteFallback(this)">`;
 const monCard = (name, dead) => `<div class="mon${dead ? ' dead' : ''}"><div class="box">${sprite(name)}</div><span title="${esc(name)}">${esc(name)}</span></div>`;
 
 /* ---------- team parsing ---------- */
@@ -225,10 +233,12 @@ function parseTeam(text) {
     const lines = b.split('\n').map(l => l.trim()).filter(Boolean);
     let first = lines[0], item = '';
     if (first.includes('@')) { [first, item] = first.split('@').map(s => s.trim()); }
+    const gender = (first.match(/\((M|F)\)\s*$/) || [])[1];
     first = first.replace(/\s*\((M|F)\)\s*$/, '');
     let nick = '', species = first;
     const m = first.match(/^(.*)\((.+)\)$/);
     if (m) { nick = m[1].trim(); species = m[2].trim(); }
+    if (gender === 'F' && ['Meowstic', 'Indeedee', 'Basculegion', 'Oinkologne'].includes(species)) species += '-F';
     const get = k => (lines.find(l => l.startsWith(k + ':')) || '').slice(k.length + 1).trim();
     return {species, nick, item, ability: get('Ability'), tera: get('Tera Type'), nature: get('Nature') || (lines.find(l => /Nature$/.test(l)) || '').replace(' Nature', ''), evs: get('EVs'),
       moves: lines.filter(l => l.startsWith('-')).map(l => l.replace(/^-\s*/, ''))};
@@ -254,7 +264,7 @@ function renderTeams() {
       <div class="entry-head"><h3>${esc(t.name)}</h3><span class="meta">${esc(t.format)} ${esc(new Date(t.added).toLocaleDateString())}</span></div>
       <div class="sprites">${t.mons.map(m => monCard(m.species)).join('')}</div>
       ${t.mons.some(m => m.moves.length || m.item) ? `<details><summary>Sets</summary><div class="sets">${t.mons.map(m => `
-        <div class="set">${sprite(m.species)}<div><b>${esc(m.species)}</b>${m.item ? ' @ ' + esc(m.item) : ''}
+        <div class="set">${sprite(m.species)}<div><b>${m.nick ? esc(m.nick) + ' (' + esc(m.species) + ')' : esc(m.species)}</b>${m.item ? ' @ ' + esc(m.item) : ''}
         <div class="meta">${[m.ability, m.tera && 'Tera ' + m.tera, m.nature].filter(Boolean).map(esc).join(', ')}</div>
         ${m.evs ? `<div class="meta">EVs: ${esc(m.evs)}</div>` : ''}
         <ul>${m.moves.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div></div>`).join('')}</div></details>` : ''}
