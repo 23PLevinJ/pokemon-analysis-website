@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Team Notebook</title>
+<style>
+:root{--bg:#f3f5f1;--card:#fff;--ink:#1c2420;--mute:#5d6b63;--line:#d5dcd6;--acc:#1f6f5b;--acc2:#e0b43a;--bad:#b3392f}
+@media (prefers-color-scheme:dark){:root{--bg:#141b18;--card:#1d2723;--ink:#e8eee9;--mute:#9baba2;--line:#32413a;--acc:#4fc1a1;--acc2:#e0b43a;--bad:#e8776d}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Georgia,"Times New Roman",serif}
+h1,h2,h3,button,label,input,select,textarea,.sans{font-family:"Trebuchet MS","Segoe UI",sans-serif}
+header{padding:28px 20px 0;max-width:960px;margin:auto}
+h1{margin:0 0 4px;font-size:30px;letter-spacing:-.01em}
+header p{margin:0;color:var(--mute)}
+nav{display:flex;gap:4px;margin-top:20px;border-bottom:2px solid var(--line)}
+nav button{background:none;border:0;padding:10px 18px;font-size:16px;cursor:pointer;color:var(--mute);border-bottom:3px solid transparent;margin-bottom:-2px}
+nav button[aria-selected=true]{color:var(--ink);border-color:var(--acc);font-weight:700}
+main{max-width:960px;margin:auto;padding:20px}
+section[hidden]{display:none}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px;margin-bottom:20px}
+.panel h2{margin:0 0 12px;font-size:19px}
+label{display:block;font-size:14px;font-weight:700;margin:12px 0 4px}
+input,textarea{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font-size:15px}
+textarea{min-height:130px;resize:vertical;font-family:inherit}
+textarea.mono{font-family:Consolas,monospace;font-size:13px;min-height:200px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:600px){.row{grid-template-columns:1fr}}
+button.primary{margin-top:14px;background:var(--acc);color:#fff;border:0;border-radius:6px;padding:10px 20px;font-size:15px;font-weight:700;cursor:pointer}
+button.link{background:none;border:0;color:var(--bad);cursor:pointer;font-size:14px;padding:4px 0}
+button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid var(--acc2);outline-offset:2px}
+.hint{font-size:13px;color:var(--mute);margin:4px 0 0}
+.err{color:var(--bad);font-size:14px;margin-top:8px}
+.entry-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.entry-head h3{margin:0;font-size:20px}
+.meta{color:var(--mute);font-size:14px}
+.sprites{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}
+.mon{width:92px;text-align:center;font-size:12px;font-family:"Trebuchet MS",sans-serif}
+.mon .box{height:80px;display:flex;align-items:center;justify-content:center;background:var(--bg);border:1px solid var(--line);border-radius:8px}
+.mon img{max-width:80px;max-height:76px;image-rendering:pixelated}
+.mon span{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mon.dead img{filter:grayscale(1);opacity:.5}
+details{margin:8px 0}
+summary{cursor:pointer;font-weight:700;font-family:"Trebuchet MS",sans-serif;font-size:14px}
+.sets{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:10px}
+.set{border:1px solid var(--line);border-radius:6px;padding:10px;font-size:14px;display:flex;gap:8px}
+.set img{width:48px;height:48px;object-fit:contain;image-rendering:pixelated;flex:none}
+.set b{font-family:"Trebuchet MS",sans-serif}
+.set ul{margin:4px 0 0;padding-left:18px}
+.players{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:600px){.players{grid-template-columns:1fr}}
+.players h4{margin:0;font-family:"Trebuchet MS",sans-serif}
+.win{color:var(--acc);font-weight:700}
+.turn{border-top:1px solid var(--line);padding:6px 0;font-size:14px}
+.turn b{font-family:"Trebuchet MS",sans-serif}
+.turn p{margin:2px 0;color:var(--mute)}
+.analysis{margin-top:10px}
+.empty{color:var(--mute);text-align:center;padding:24px}
+#sync summary{font-size:15px}
+#sync .row button{margin-top:0}
+button.sec{background:none;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:8px 14px;font-size:14px;cursor:pointer;margin:12px 8px 0 0}
+#sync-status{font-size:14px;color:var(--mute);margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Team Notebook</h1>
+  <p>Save Pokémon teams and replays, and write your analysis next to them.</p>
+  <nav role="tablist">
+    <button role="tab" id="tab-teams" aria-selected="true" onclick="showTab('teams')">Teams</button>
+    <button role="tab" id="tab-replays" aria-selected="false" onclick="showTab('replays')">Replays</button>
+  </nav>
+</header>
+<main>
+<details class="panel" id="sync">
+  <summary>Sync across devices</summary>
+  <p class="hint">Uses a free Firebase Realtime Database that you own. Enter the same database URL and sync code on every device. Anyone who knows your sync code can read and edit your data, so keep it private.</p>
+  <div class="row">
+    <div><label for="s-url">Database URL</label><input id="s-url" placeholder="https://your-project-default-rtdb.firebaseio.com"></div>
+    <div><label for="s-code">Sync code (8+ characters)</label><input id="s-code" autocomplete="off"></div>
+  </div>
+  <button class="sec" onclick="genCode()">Generate code</button>
+  <button class="primary" style="margin-top:12px" onclick="connectSync()">Connect and sync</button>
+  <button class="sec" onclick="disconnectSync()">Disconnect</button>
+  <div id="sync-status">Not connected. Data is saved only in this browser.</div>
+</details>
+<section id="teams">
+  <div class="panel">
+    <h2>Add a team</h2>
+    <div class="row">
+      <div><label for="t-name">Team name</label><input id="t-name" placeholder="e.g. Rain offense"></div>
+      <div><label for="t-format">Format</label><input id="t-format" placeholder="e.g. Gen 9 OU"></div>
+    </div>
+    <label for="t-paste">Team</label>
+    <textarea id="t-paste" class="mono" placeholder="Paste a Showdown export, or just list Pokémon separated by commas or new lines (Pelipper, Barraskewda, Ferrothorn...)"></textarea>
+    <p class="hint">Sprites appear as soon as the team is added.</p>
+    <label for="t-analysis">Analysis</label>
+    <textarea id="t-analysis" placeholder="Game plan, strengths, weaknesses, threats, how each Pokémon is used..."></textarea>
+    <button class="primary" onclick="addTeam()">Add team</button>
+    <div class="err" id="t-err"></div>
+  </div>
+  <div id="team-list"></div>
+</section>
+
+<section id="replays" hidden>
+  <div class="panel">
+    <h2>Add a replay</h2>
+    <label for="r-url">Replay link</label>
+    <input id="r-url" placeholder="https://replay.pokemonshowdown.com/gen9ou-1234567890">
+    <label for="r-analysis">Analysis</label>
+    <textarea id="r-analysis" placeholder="Key turns, misplays, what you would change..."></textarea>
+    <button class="primary" onclick="addReplay()">Parse and add replay</button>
+    <div class="err" id="r-err"></div>
+  </div>
+  <div id="replay-list"></div>
+</section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let data = {teams: [], replays: []};
+try { const s = localStorage.getItem('teamNotebook'); if (s) data = JSON.parse(s); } catch (e) {}
+data.teams = data.teams || []; data.replays = data.replays || []; data.deleted = data.deleted || {};
+const saveLocal = () => { try { localStorage.setItem('teamNotebook', JSON.stringify(data)); } catch (e) {} };
+
+/* ---------- sync (Firebase Realtime Database over REST) ---------- */
+let sync = {url: '', code: ''};
+try { sync = JSON.parse(localStorage.getItem('teamNotebookSync')) || sync; } catch (e) {}
+let pushTimer, syncing = false, syncAgain = false;
+const syncOn = () => !!(sync.url && sync.code);
+const endpoint = () => `${sync.url.replace(/\/+$/, '')}/notebooks/${encodeURIComponent(sync.code)}.json`;
+const setStatus = (m, bad) => { const e = $('sync-status'); e.textContent = m; e.style.color = bad ? 'var(--bad)' : ''; };
+const stamp = i => i.updated || i.id;
+
+function save() {
+  saveLocal();
+  if (syncOn()) { clearTimeout(pushTimer); pushTimer = setTimeout(syncNow, 1000); }
+}
+
+function merge(remote) {
+  const gone = {...data.deleted, ...(remote.deleted || {})};
+  data.deleted = gone;
+  for (const kind of ['teams', 'replays']) {
+    const map = new Map();
+    for (const it of [...(remote[kind] || []), ...data[kind]]) {
+      const old = map.get(it.id);
+      if (!old || stamp(it) >= stamp(old)) map.set(it.id, it);
+    }
+    data[kind] = [...map.values()].filter(i => !gone[i.id]).sort((a, b) => b.id - a.id);
+  }
+}
+
+async function syncNow() {
+  if (!syncOn()) return;
+  if (syncing) { syncAgain = true; return; }
+  syncing = true; setStatus('Syncing...');
+  try {
+    const r = await fetch(endpoint());
+    if (!r.ok) throw new Error('read failed (status ' + r.status + ')');
+    const raw = await r.json();
+    const before = JSON.stringify(data);
+    if (raw) merge(JSON.parse(raw));
+    const changed = before !== JSON.stringify(data);
+    saveLocal();
+    const p = await fetch(endpoint(), {method: 'PUT', body: JSON.stringify(JSON.stringify(data))});
+    if (!p.ok) throw new Error('write failed (status ' + p.status + ')');
+    setStatus('Synced at ' + new Date().toLocaleTimeString());
+    if (changed && document.activeElement?.tagName !== 'TEXTAREA') renderAll();
+  } catch (e) {
+    setStatus('Sync failed: ' + e.message + '. Check the database URL and rules.', true);
+  } finally {
+    syncing = false;
+    if (syncAgain) { syncAgain = false; syncNow(); }
+  }
+}
+
+function genCode() { $('s-code').value = crypto.randomUUID().replace(/-/g, '').slice(0, 20); }
+function connectSync() {
+  const url = $('s-url').value.trim(), code = $('s-code').value.trim();
+  if (!/^https:\/\//.test(url) || code.length < 8) { setStatus('Enter the https database URL and a sync code of at least 8 characters.', true); return; }
+  sync = {url, code};
+  try { localStorage.setItem('teamNotebookSync', JSON.stringify(sync)); } catch (e) {}
+  syncNow();
+}
+function disconnectSync() {
+  sync = {url: '', code: ''};
+  try { localStorage.removeItem('teamNotebookSync'); } catch (e) {}
+  setStatus('Not connected. Data is saved only in this browser.');
+}
+
+function showTab(t) {
+  ['teams', 'replays'].forEach(n => {
+    $(n).hidden = n !== t;
+    $('tab-' + n).setAttribute('aria-selected', n === t);
+  });
+}
+
+/* ---------- sprites ---------- */
+const sid = n => n.toLowerCase().replace(/[^a-z0-9-]/g, '');
+const SPRITE = 'https://play.pokemonshowdown.com/sprites/';
+function spriteFallback(img) {
+  const id = img.dataset.id, stage = +img.dataset.stage || 0;
+  img.dataset.stage = stage + 1;
+  if (stage === 0) img.src = SPRITE + 'dex/' + id + '.png';
+  else if (stage === 1 && id.includes('-')) img.src = SPRITE + 'gen5/' + id.split('-')[0] + '.png';
+  else img.style.visibility = 'hidden';
+}
+const sprite = (name, cls = '') => `<img ${cls} alt="${esc(name)}" data-id="${esc(sid(name))}" src="${SPRITE}gen5/${esc(sid(name))}.png" onerror="spriteFallback(this)">`;
+const monCard = (name, dead) => `<div class="mon${dead ? ' dead' : ''}"><div class="box">${sprite(name)}</div><span title="${esc(name)}">${esc(name)}</span></div>`;
+
+/* ---------- team parsing ---------- */
+function parseTeam(text) {
+  const blocks = text.trim().split(/\n\s*\n/).filter(b => b.trim());
+  const isExport = /^\s*-\s|Ability:|EVs:|@/m.test(text);
+  if (!isExport) {
+    return text.split(/[,\n]/).map(s => s.trim()).filter(Boolean).slice(0, 6).map(species => ({species, nick: '', item: '', ability: '', tera: '', moves: []}));
+  }
+  return blocks.slice(0, 6).map(b => {
+    const lines = b.split('\n').map(l => l.trim()).filter(Boolean);
+    let first = lines[0], item = '';
+    if (first.includes('@')) { [first, item] = first.split('@').map(s => s.trim()); }
+    first = first.replace(/\s*\((M|F)\)\s*$/, '');
+    let nick = '', species = first;
+    const m = first.match(/^(.*)\((.+)\)$/);
+    if (m) { nick = m[1].trim(); species = m[2].trim(); }
+    const get = k => (lines.find(l => l.startsWith(k + ':')) || '').slice(k.length + 1).trim();
+    return {species, nick, item, ability: get('Ability'), tera: get('Tera Type'), nature: get('Nature') || (lines.find(l => /Nature$/.test(l)) || '').replace(' Nature', ''), evs: get('EVs'),
+      moves: lines.filter(l => l.startsWith('-')).map(l => l.replace(/^-\s*/, ''))};
+  });
+}
+
+function addTeam() {
+  const txt = $('t-paste').value;
+  const mons = parseTeam(txt);
+  if (!mons.length) { $('t-err').textContent = 'Paste a team or list at least one Pokémon.'; return; }
+  $('t-err').textContent = '';
+  data.teams.unshift({id: Date.now(), name: $('t-name').value.trim() || 'Untitled team', format: $('t-format').value.trim(), mons, analysis: $('t-analysis').value, added: new Date().toISOString()});
+  save();
+  ['t-name', 't-format', 't-paste', 't-analysis'].forEach(i => $(i).value = '');
+  renderTeams();
+}
+
+function renderTeams() {
+  const el = $('team-list');
+  if (!data.teams.length) { el.innerHTML = '<div class="empty">No teams yet. Add one above.</div>'; return; }
+  el.innerHTML = data.teams.map(t => `
+    <div class="panel">
+      <div class="entry-head"><h3>${esc(t.name)}</h3><span class="meta">${esc(t.format)} ${esc(new Date(t.added).toLocaleDateString())}</span></div>
+      <div class="sprites">${t.mons.map(m => monCard(m.species)).join('')}</div>
+      ${t.mons.some(m => m.moves.length || m.item) ? `<details><summary>Sets</summary><div class="sets">${t.mons.map(m => `
+        <div class="set">${sprite(m.species)}<div><b>${esc(m.species)}</b>${m.item ? ' @ ' + esc(m.item) : ''}
+        <div class="meta">${[m.ability, m.tera && 'Tera ' + m.tera, m.nature].filter(Boolean).map(esc).join(', ')}</div>
+        ${m.evs ? `<div class="meta">EVs: ${esc(m.evs)}</div>` : ''}
+        <ul>${m.moves.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div></div>`).join('')}</div></details>` : ''}
+      <div class="analysis"><label for="ta-${t.id}">Analysis</label>
+      <textarea id="ta-${t.id}" oninput="editAnalysis('teams',${t.id},this.value)">${esc(t.analysis)}</textarea></div>
+      <button class="link" onclick="del('teams',${t.id})">Delete team</button>
+    </div>`).join('');
+}
+
+/* ---------- replays ---------- */
+function parseReplay(log, meta) {
+  const players = {p1: meta.players?.[0] || 'Player 1', p2: meta.players?.[1] || 'Player 2'};
+  const teams = {p1: [], p2: []}, fainted = {p1: [], p2: []};
+  let winner = '', turn = 0, format = meta.format || '';
+  const turns = [{n: 0, ev: []}];
+  const who = s => { const m = s.match(/^(p[12])[ab]?: (.+)$/); return m ? {side: m[1], name: m[2]} : {side: '', name: s}; };
+  const pn = side => players[side] || side;
+  const cur = () => turns[turns.length - 1].ev;
+  for (const line of log.split('\n')) {
+    const p = line.split('|'); const k = p[1];
+    if (k === 'player' && p[3]) players[p[2]] = p[3];
+    else if (k === 'gametype' && !format) format = p[2];
+    else if (k === 'tier') format = p[2];
+    else if (k === 'poke') { const sp = p[3].split(',')[0].replace(/-\*$/, ''); teams[p[2]].push(sp); }
+    else if (k === 'turn') { turn = +p[2]; turns.push({n: turn, ev: []}); }
+    else if (k === 'switch' || k === 'drag') { const w = who(p[2]); cur().push(`${pn(w.side)} sent out ${p[3].split(',')[0]}`); }
+    else if (k === 'move') { const w = who(p[2]); cur().push(`${w.name} (${pn(w.side)}) used ${p[3]}`); }
+    else if (k === 'faint') { const w = who(p[2]); cur().push(`${w.name} (${pn(w.side)}) fainted`); fainted[w.side].push(w.name); }
+    else if (k === '-terastallize') { const w = who(p[2]); cur().push(`${w.name} Terastallized into ${p[3]}`); }
+    else if (k === 'win') winner = p[2];
+  }
+  return {players, teams, fainted, winner, turnCount: turn, format, turns: turns.filter(t => t.ev.length)};
+}
+
+async function addReplay() {
+  const m = $('r-url').value.trim().match(/replay\.pokemonshowdown\.com\/([^\s?#]+)/);
+  if (!m) { $('r-err').textContent = 'Enter a link like https://replay.pokemonshowdown.com/gen9ou-1234567890'; return; }
+  const id = m[1].replace(/\.(json|log)$/, '');
+  $('r-err').textContent = 'Loading replay...';
+  try {
+    const res = await fetch(`https://replay.pokemonshowdown.com/${id}.json`);
+    if (!res.ok) throw new Error('Replay not found (status ' + res.status + ')');
+    const j = await res.json();
+    const parsed = parseReplay(j.log || '', {players: j.players, format: j.format});
+    data.replays.unshift({id: Date.now(), rid: id, url: `https://replay.pokemonshowdown.com/${id}`, ...parsed, analysis: $('r-analysis').value, added: new Date().toISOString()});
+    save(); $('r-url').value = ''; $('r-analysis').value = ''; $('r-err').textContent = '';
+    renderReplays();
+  } catch (e) {
+    $('r-err').textContent = 'Could not load that replay: ' + e.message + '. Check the link and your connection.';
+  }
+}
+
+function renderReplays() {
+  const el = $('replay-list');
+  if (!data.replays.length) { el.innerHTML = '<div class="empty">No replays yet. Add a link above.</div>'; return; }
+  el.innerHTML = data.replays.map(r => {
+    const side = s => `<div><h4>${esc(r.players[s])}${r.winner === r.players[s] ? ' <span class="win">(winner)</span>' : ''}</h4>
+      <div class="sprites">${r.teams[s].map(sp => monCard(sp, r.fainted[s].some(f => f === sp || sp.startsWith(f)))).join('')}</div></div>`;
+    return `<div class="panel">
+      <div class="entry-head"><h3>${esc(r.players.p1)} vs ${esc(r.players.p2)}</h3><span class="meta">${esc(r.format)} ${r.turnCount} turns</span></div>
+      <p class="meta">Winner: <span class="win">${esc(r.winner || 'unknown')}</span> <a href="${esc(r.url)}" target="_blank" rel="noopener">Open on Showdown</a></p>
+      <div class="players">${side('p1')}${side('p2')}</div>
+      <details><summary>Turn-by-turn log</summary>${r.turns.map(t => `<div class="turn"><b>${t.n ? 'Turn ' + t.n : 'Leads'}</b>${t.ev.map(e => `<p>${esc(e)}</p>`).join('')}</div>`).join('')}</details>
+      <div class="analysis"><label for="ra-${r.id}">Analysis</label>
+      <textarea id="ra-${r.id}" oninput="editAnalysis('replays',${r.id},this.value)">${esc(r.analysis)}</textarea></div>
+      <button class="link" onclick="del('replays',${r.id})">Delete replay</button>
+    </div>`;
+  }).join('');
+}
+
+/* ---------- shared ---------- */
+function editAnalysis(kind, id, v) { const x = data[kind].find(i => i.id === id); if (x) { x.analysis = v; x.updated = Date.now(); save(); } }
+function del(kind, id) {
+  if (!confirm('Delete this entry?')) return;
+  data[kind] = data[kind].filter(i => i.id !== id);
+  data.deleted[id] = Date.now(); save();
+  renderAll();
+}
+function renderAll() { renderTeams(); renderReplays(); }
+renderAll();
+if (syncOn()) { $('s-url').value = sync.url; $('s-code').value = sync.code; $('sync').open = false; syncNow(); }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
+</script>
+</body>
+</html>
